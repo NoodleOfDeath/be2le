@@ -1,0 +1,154 @@
+#!/bin/bash
+
+this=$(basename $0)
+
+usage() {
+	echo "$this v.1.0 (c) 2019 NoodleOfDeath"
+	echo
+	echo "usage: $this [options] <hex-string> ...[hex-string]"
+	echo
+	echo "options:"
+	echo "  -h|--help                             displays this help message"
+	echo "  -f format|--format=format             specifies the output format; values can be \"preserve\", \"int\", \"char\", or \"raw\". Default is \"preserve\""
+	echo "  -d delimiter|--delimiter=delimiter    specifies the delimiter used to separate converted strings; default is a newline character"
+	echo "  -n|--no-newline                       omits the trailing newline when printing to stdout"
+	echo "  -j|--join                             prints all converted strings as a single joined string"
+	echo "  -s|--strip-null                       strips leading null bytes."
+	echo
+	echo "examples:"
+	echo
+	echo "\$ $this d76f411475428afc90947ee320"
+	echo "20e37e9490fc8a427514416fd7"
+	echo
+	echo "\$ $this 0x3 0x41 67328fa 0x100aaf"
+	echo "0x03"
+	echo "0x41"
+	echo "fa287306"
+	echo "0xaf0a10"
+	echo
+	echo "\$ $this aaff ade0 0x0dd '\x8700' -s -d \", \""
+	echo "ffaa, e0ad, 0xdd00, \x87"
+	echo
+	echo "\$ $this 0xffee af0a d9c3 -j"
+	echo "0xeeff0aafc3d9 "
+	echo
+	echo "\$ $this 0x33ffadfe -f char"
+	echo "\xfe\xad\xff\x33"
+	echo
+	echo "\$ $this 0x00aa 0xaa aaaa00 -f int"
+	echo "0xaa 0x00 "
+	echo "0xaa "
+	echo "0x00 0xaa 0xaa "
+	echo
+	exit 0
+}
+
+err() {
+	echo "Error: $1"
+	echo "Try $this -h or $this --help for more."
+	exit 1
+}
+
+if [ -z "$1" ]; then
+	usage
+	exit;
+fi
+
+args=()
+
+format=preserve
+delimiter="\n"
+nonewline=false
+join=false
+strip=false
+
+while (( "$#" )); do
+	case "$1" in
+		-h|--help) usage;;
+		-f) format=$2; shift 2;;
+		--format=*) format="${1#*=}"; shift;;
+		--format) err "--format flag must be of the form --format=format";;
+		-d)	delimiter=$2; shift 2;;
+		--delimiter=*) delimiter="${1#*=}"; shift;;
+		--delimiter) err "--delimiter flag must be of the form --delimiter=delimiter";;
+		-n|--no-newline) nonewline=true; shift;;
+		-j|--join)
+			join=true;
+			shift;;
+		-s|--strip-null) strip=true; shift;;
+		-*|--*) err "unsupported flag $1 specified";;
+		*) args=( "${args[@]}" "$1" ); shift;;
+	esac
+done
+
+case "$format" in
+	preserve);;
+	int) prefix="0x";;
+	char) prefix="\x";; 
+	raw) ;;
+	*) err "unsupported format $format";;
+esac
+
+n=0
+parts=()
+for arg in ${args[@]}; do
+
+	digest=""
+	prefix=""
+
+	# remove prefix if string begins with "0x"
+	if [[ $arg =~ ^[0\\]x ]]; then
+		if [ "$format" == "preserve" ]; then
+			prefix=${arg:0:2}
+		fi
+		arg=${arg:2}
+	fi
+
+	# zero-pad if string has odd length
+	if [ $[${#arg} % 2] != 0 ]; then
+		arg="0$arg"
+	fi
+
+	part=""
+	i=${#arg}
+	while [ $i -gt 0 ]; do
+       i=$[$i-2]
+		byte=${arg:$i:2}
+		if [ $strip == true ] && [ -z "$part" ] && [ $byte == "00" ]; then
+			continue
+		fi
+		case "$format" in
+			int) part="$part"'0x'"$byte ";;
+			char) part="$part\x$byte";;
+			raw) part="$part$(printf "%b" "\x$byte")";;
+			*) part="$part$byte";;
+		esac
+	done
+
+	digest="$prefix$digest$part"
+
+	parts=( "${parts[@]}" "$digest" )
+	n=$[$n+1]
+
+done
+
+if [ $join == true ]; then
+	case "$format" in
+		*) printf "%s" "${parts[@]}";;
+	esac
+else
+	i=0
+	for part in "${parts[@]}"; do
+		if [[ $(($i + 1)) < $n ]]; then
+			printf "%s$delimiter" "$part"
+		else
+			printf "%s" "$part"
+		fi
+		i=$(($i+1))
+	done
+fi
+
+if [ $nonewline == false ]; then
+	echo
+fi
+
